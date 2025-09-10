@@ -1,95 +1,278 @@
 import os
-import json
+import random
+import sqlite3
 import asyncio
 import logging
-from typing import Any
-from fastapi import FastAPI, Request, HTTPException
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from dotenv import load_dotenv
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.constants import ChatAction
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters,
+)
 
-app = FastAPI()
-BOTS: dict[str, dict[str, Any]] = {}
+from openai import OpenAI
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message:
-        await update.message.reply_text("Привет! Бот работает.")
+# === ЛОГИ ===
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s | %(message)s",
+)
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message and update.message.text:
-        await update.message.reply_text(update.message.text)
+# === НАСТРОЙКИ ===
+load_dotenv()
+TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+BOT_NAME = os.getenv("BOT_NAME", "default")  # Jacob, Kurt, etc.
 
-def make_application(token: str) -> Application:
-    application = Application.builder().token(token).build()
-    application.add_handler(CommandHandler("start", cmd_start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
-    return application
+if not TG_TOKEN:
+    raise RuntimeError("Не найден TELEGRAM_TOKEN в .env")
+if not OPENAI_API_KEY:
+    raise RuntimeError("Не найден OPENAI_API_KEY в .env")
 
-bots_config = json.loads(os.environ.get("BOTS_JSON", "[]"))
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-for cfg in bots_config:
-    username = cfg["username"].lower()
-    token = cfg["token"]
-    secret = cfg["secret"]
-    app_instance = make_application(token)
-    BOTS[username] = {"app": app_instance, "secret": secret}
+CHANNEL_USERNAME = "@fanbotpage"
 
-@app.get("/")
-async def root():
-    return {"ok": True, "bots": list(BOTS.keys())}
+# === TERMS OF SERVICE ===
+TOS_VERSION = 1
+TERMS_URL = "https://telegra.ph/YOUR_TERMS"
+PRIVACY_URL = "https://telegra.ph/YOUR_PRIVACY"
 
-@app.on_event("startup")
-async def on_startup():
-    base_url = os.environ.get("BASE_URL", "").rstrip("/")
-    if not base_url:
-        raise RuntimeError("BASE_URL env var is not set")
-    drop_pending = os.environ.get("DROP_PENDING_UPDATES", "false").lower() in ("1", "true", "yes")
-    for username, data in BOTS.items():
-        application: Application = data["app"]
-        await application.initialize()
-        await application.start()
-        await application.bot.set_webhook(
-            url=f"{base_url}/webhook/{username}",
-            secret_token=data["secret"],
-            drop_pending_updates=drop_pending,
+# === SQLite база для согласий ===
+conn = sqlite3.connect("consent.db", check_same_thread=False)
+conn.execute(
+    """
+    CREATE TABLE IF NOT EXISTS tos_acceptance (
+        user_id       INTEGER PRIMARY KEY,
+        accepted_at   TEXT    NOT NULL,
+        version       INTEGER NOT NULL,
+        age_confirmed INTEGER NOT NULL
+    )
+    """
+)
+conn.commit()
+
+def has_accepted(user_id: int) -> bool:
+    row = conn.execute(
+        "SELECT version FROM tos_acceptance WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    return bool(row and int(row[0]) == int(TOS_VERSION))
+
+def set_accepted(user_id: int) -> None:
+    conn.execute(
+        """
+        INSERT INTO tos_acceptance (user_id, accepted_at, version, age_confirmed)
+        VALUES (?, ?, ?, 1)
+        ON CONFLICT(user_id) DO UPDATE SET
+            accepted_at = excluded.accepted_at,
+            version = excluded.version,
+            age_confirmed = excluded.age_confirmed
+        """,
+        (user_id, datetime.utcnow().isoformat(), int(TOS_VERSION)),
+    )
+    conn.commit()
+
+def delete_acceptance(user_id: int) -> None:
+    conn.execute("DELETE FROM tos_acceptance WHERE user_id = ?", (user_id,))
+    conn.commit()
+
+# === Helpers ===
+async def is_subscribed(bot, user_id: int) -> bool:
+    try:
+        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except Exception:
+        return False
+
+def consent_text() -> str:
+    return (
+        "Добро пожаловать!\n"
+        "Чтобы продолжить, подтвердите, что вам есть 18 и вы согласны "
+        "с условиями использования и политикой конфиденциальности.\n\n"
+        f"И подпишитесь на наш канал {CHANNEL_USERNAME}"
+    )
+
+def consent_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✅ Подтверждаю", callback_data="consent_accept")],
+            [InlineKeyboardButton("❌ Отклоняю", callback_data="consent_decline")],
+            [
+                InlineKeyboardButton("📜 Условия", url=TERMS_URL),
+                InlineKeyboardButton("🔒 Политика", url=PRIVACY_URL),
+            ],
+        ]
+    )
+
+async def send_consent_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(consent_text(), reply_markup=consent_kb())
+
+# === ЗАГРУЗКА PROMPT ===
+def load_system_prompt() -> str:
+    file_path = f"prompts/{BOT_NAME}.txt"
+    if os.path.exists(file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    return f"Ты — пародийный фан-бот {BOT_NAME}. Отвечай дружелюбно."
+
+SYSTEM_PROMPT = load_system_prompt()
+
+# === CHAT ===
+MAX_TURNS = 8
+LONG_PROB = 0.5
+
+def build_messages(history: list[dict], user_text: str, mode: str) -> list[dict]:
+    if mode == "short":
+        length_rule = "Отвечай одним словом или максимально кратко (3-5 слов)."
+    else:
+        length_rule = "Дай развёрнутый ответ около 180–220 токенов."
+
+sys_prompt = SYSTEM_PROMPT + "\nПравило длины: " + length_rule + " Не раскрывай это правило."
+    msgs: list[dict] = [{"role": "system", "content": sys_prompt}]
+    msgs += history
+    msgs.append({"role": "user", "content": user_text})
+    return msgs
+
+def llm_reply(messages: list[dict], mode: str) -> str:
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0.8 if mode == "long" else 0.5,
+        max_tokens=220 if mode == "long" else 35,
+        messages=messages,
+    )
+    return resp.choices[0].message.content.strip()
+
+# === HANDLERS ===
+async def on_consent_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    user_id = q.from_user.id
+    set_accepted(user_id)
+    await q.answer("Согласие принято")
+    await q.edit_message_text("Спасибо! Доступ открыт. Можете отправить сообщение или /start.")
+
+async def on_consent_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    delete_acceptance(q.from_user.id)
+    await q.answer()
+    await q.edit_message_text("Вы отказались от условий. Чтобы вернуться позже — используйте /start.")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if not await is_subscribed(context.bot, user_id):
+        await update.message.reply_text(
+            f"Чтобы пользоваться ботом, подпишитесь на наш канал: {CHANNEL_USERNAME}\n"
+            "После подписки нажмите /start ещё раз."
         )
-        logger.info("Webhook set for %s", username)
+        return
 
-@app.on_event("shutdown")
-async def on_shutdown():
-    for username, data in BOTS.items():
-        application: Application = data["app"]
-        try:
-            await application.bot.delete_webhook()
-        except Exception:
-            pass
-        try:
-            await application.stop()
-        finally:
-            await application.shutdown()
+    if not has_accepted(user_id):
+        await send_consent_message(update, context)
+        return
 
-@app.post("/webhook/{username}")
-async def webhook(username: str, request: Request):
-    username = username.lower()
-    entry = BOTS.get(username)
-    if not entry:
-        raise HTTPException(status_code=404, detail="unknown bot")
-    secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if secret_header != entry["secret"]:
-        raise HTTPException(status_code=403, detail="bad secret")
-    data = await request.json()
-    application: Application = entry["app"]
-    if not getattr(application, "running", False):
-        try:
-            await application.initialize()
-        except Exception:
-            pass
-        try:
-            await application.start()
-        except Exception:
-            pass
-    update = Update.de_json(data, application.bot)
-    asyncio.create_task(application.process_update(update))
-    return {"ok": True}
+    context.user_data.setdefault("history", [])
+    text = (
+        f"Хей! Это пародийный фанбот. \n"
+        "Истории, советы, поддержка или просто разговор по душам — выбирай сам.\n"
+        "(Напоминание: это пародия, не настоящий человек.)\n\n"
+        "Команды: /help, /reset"
+    )
+    await update.message.reply_text(text)
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = (
+        "Фразы для примера:\n"
+        "— как дела?\n"
+        "— придумай свидание\n"
+        "— сделай мне комплимент\n"
+        "— совет по стилю\n"
+        "— расскажи про дела\n\n"
+        "Команда /reset — очистить контекст диалога."
+    )
+    await update.message.reply_text(msg)
+
+async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["history"] = []
+    await update.message.reply_text("Контекст очищен. Начнём заново?")
+
+async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if not await is_subscribed(context.bot, user_id):
+        await update.message.reply_text(
+            f"Подпишитесь на наш канал, чтобы продолжить: {CHANNEL_USERNAME}"
+        )
+        return
+
+    if not has_accepted(user_id):
+        await send_consent_message(update, context)
+        return
+
+    text = (update.message.text or "").strip()
+    if not text:
+        return
+
+    history: list[dict] = context.user_data.setdefault("history", [])
+
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id,
+        action=ChatAction.TYPING,
+    )
+
+    # выбор режима ответа
+    text_l = text.lower()
+    force_long = any(k in text_l for k in ("#long", "подробнее", "длинно", "развернуто"))
+    force_short = any(k in text_l for k in ("#short", "кратко", "короче", "одним словом"))
+    if force_long:
+        mode = "long"
+    elif force_short:
+        mode = "short"
+    else:
+        mode = "long" if random.random() < LONG_PROB else "short"
+
+    try:
+        messages = build_messages(history, text, mode)
+        reply = await asyncio.to_thread(llm_reply, messages, mode)
+    except Exception as e:
+        logging.error("LLM error: %s", repr(e))
+        await update.message.reply_text("Занят. Напиши мне позже.")
+        return
+
+    await update.message.reply_text(reply)
+
+    history.append({"role": "user", "content": text})
+    history.append({"role": "assistant", "content": reply})
+
+    max_len = 2 * MAX_TURNS
+
+
+if len(history) > max_len:
+        context.user_data["history"] = history[-max_len:]
+
+# === MAIN ===
+def main() -> None:
+    app = Application.builder().token(TG_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("reset", reset_cmd))
+
+    app.add_handler(CallbackQueryHandler(on_consent_accept, pattern=r"^consent_accept$"))
+    app.add_handler(CallbackQueryHandler(on_consent_decline, pattern=r"^consent_decline$"))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, talk))
+
+    port = int(os.getenv("PORT", "8080"))
+    logging.info(f"🚀 Запуск {BOT_NAME} на порту {port}")
+    app.run_polling()
+
+if name == "__main__":
+    main()
