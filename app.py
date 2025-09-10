@@ -26,8 +26,7 @@ return application
 # Load config from env
 # BOTS_JSON пример:
 # [
-#   {"username": "JacobElordiLoveBot", "token": "1234:ABC", "secret": "your-long-secret"},
-#   {"username": "AnotherBot", "token": "5678:DEF", "secret": "another-secret"}
+#   {"username":"Jacob_Elordi_Love_Bot","token":"8413551192:AAGLcTBXKJi7JM9qeukASP4LLzV3-pdlCb4","secret":"jacob_2s9Q-7nFg_1X"},
 # ]
 bots_config = json.loads(os.environ.get("BOTS_JSON", "[]"))
 
