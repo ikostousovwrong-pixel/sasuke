@@ -29,7 +29,7 @@ logging.basicConfig(
 load_dotenv()
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-BOT_NAME = os.getenv("BOT_NAME", "default")  # Jacob, Kurt, etc.
+BOT_NAME = os.getenv("BOT_NAME", "default")
 
 if not TG_TOKEN:
     raise RuntimeError("Не найден TELEGRAM_TOKEN в .env")
@@ -126,7 +126,7 @@ def load_system_prompt() -> str:
 SYSTEM_PROMPT = load_system_prompt()
 
 # === CHAT ===
-MAX_TURNS = 8
+MAX_TURNS = 8  # количество пар сообщений для краткосрочной памяти
 LONG_PROB = 0.5
 
 def build_messages(history: list[dict], user_text: str, mode: str) -> list[dict]:
@@ -134,10 +134,13 @@ def build_messages(history: list[dict], user_text: str, mode: str) -> list[dict]
         length_rule = "Отвечай одним словом или максимально кратко (3-5 слов)."
     else:
         length_rule = "Дай развёрнутый ответ около 180–220 токенов."
-
     sys_prompt = SYSTEM_PROMPT + "\nПравило длины: " + length_rule + " Не раскрывай это правило."
+    
+    # используем только последние MAX_TURNS*2 сообщений
+    recent_history = history[-MAX_TURNS*2:] if history else []
+    
     msgs: list[dict] = [{"role": "system", "content": sys_prompt}]
-    msgs += history
+    msgs += recent_history
     msgs.append({"role": "user", "content": user_text})
     return msgs
 
@@ -220,6 +223,7 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
+    # инициализация краткосрочной памяти
     history: list[dict] = context.user_data.setdefault("history", [])
 
     await context.bot.send_chat_action(
@@ -246,18 +250,14 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Занят. Напиши мне позже.")
         return
 
-    await update.message.reply_text(reply)
+      await update.message.reply_text(reply)
 
+    # сохраняем в память только последние 8 пар сообщений
     history.append({"role": "user", "content": text})
     history.append({"role": "assistant", "content": reply})
+    context.user_data["history"] = history[-MAX_TURNS*2:]
 
-    max_len = 2 * MAX_TURNS
-
-
-if len(history) > max_len:
-        context.user_data["history"] = history[-max_len:]
-
-# === MAIN ===
+    # === MAIN ===
 def main() -> None:
     app = Application.builder().token(TG_TOKEN).build()
 
@@ -276,3 +276,4 @@ def main() -> None:
 
 if name == "__main__":
     main()
+        
