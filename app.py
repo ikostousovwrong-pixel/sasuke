@@ -137,19 +137,21 @@ async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === Токен / Webhook ===
 def main():
     app = Application.builder().token(TG_TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(CallbackQueryHandler(on_consent_accept, pattern="^consent_accept$"))
     app.add_handler(CallbackQueryHandler(on_consent_decline, pattern="^consent_decline$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, talk))
 
-    # Запуск Webhook для Render
     import asyncio
     async def run():
+        # Устанавливаем Webhook
         await app.bot.set_webhook(WEBHOOK_URL)
         print("Webhook установлен:", WEBHOOK_URL)
+        # Запускаем приложение без polling
         await app.start()
-        await app.updater.start_polling()  # только для совместимости, можно убрать
         await asyncio.Event().wait()  # держим процесс активным
 
     asyncio.run(run())
