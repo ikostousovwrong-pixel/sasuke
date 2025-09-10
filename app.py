@@ -16,8 +16,8 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-
 from openai import OpenAI
+from aiohttp import web
 
 # ================= Настройка =================
 logging.basicConfig(
@@ -80,7 +80,7 @@ def consent_text() -> str:
     return (
         "Добро пожаловать! Для продолжения подтвердите, что вам есть 18+ "
         "и вы согласны с условиями пользования и политикой конфиденциальности.\n"
-        "Не забудьте проверить подписку на наш канал https://t.me/fanbotpage"
+        f"Не забудьте проверить подписку на наш канал https://t.me/{CHANNEL_USERNAME.strip('@')}"
     )
 
 def consent_kb() -> InlineKeyboardMarkup:
@@ -113,7 +113,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     if not await is_subscribed(context.bot, user_id):
         await update.message.reply_text(
-            f"Подпишитесь на наш канал, чтобы пользоваться ботом: https://t.me/fanbotpage\n"
+            f"Подпишитесь на наш канал, чтобы пользоваться ботом: https://t.me/{CHANNEL_USERNAME.strip('@')}\n"
             "После подписки нажмите /start ещё раз."
         )
         return
@@ -133,7 +133,7 @@ async def on_consent_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
     if not await is_subscribed(context.bot, user_id):
-        await query.message.reply_text("Сначала подпишитесь на канал: https://t.me/fanbotpage")
+        await query.message.reply_text(f"Сначала подпишитесь на канал: https://t.me/{CHANNEL_USERNAME.strip('@')}")
         return
 
     set_accepted(user_id)
@@ -193,7 +193,7 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not await is_subscribed(context.bot, user_id):
         await update.message.reply_text(
-            f"Подпишитесь на канал, чтобы продолжить: https://t.me/fanbotpage"
+            f"Подпишитесь на канал, чтобы продолжить: https://t.me/{CHANNEL_USERNAME.strip('@')}"
         )
         return
     if not has_accepted(user_id):
@@ -217,7 +217,7 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
         messages = build_messages(history, text, mode)
         reply = await asyncio.to_thread(llm_reply, messages, mode)
     except Exception as e:
-        print("LLM error:", repr(e))
+        logging.error("LLM error: %s", repr(e))
         await update.message.reply_text("Занят. Напиши позже.")
         return
 
@@ -241,13 +241,24 @@ def main():
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, talk))
 
-    # Webhook
-    async def run_webhook():
-        await app.bot.set_webhook(WEBHOOK_URL)
-        print("Webhook установлен на:", WEBHOOK_URL)
-        await asyncio.Event().wait()  # держим процесс живым
+    PORT = int(os.environ.get("PORT", 8000))
+    WEBHOOK_PATH = f"/{TG_TOKEN}"  # уникальный путь для безопасности
 
-    asyncio.run(run_webhook())
+    async def handle(request):
+        data = await request.json()
+        update = Update.de_json(data, app.bot)
+        await app.process_update(update)
+        return web.Response(text="ok")
+
+    async def on_startup(web_app):
+        await app.bot.set_webhook(WEBHOOK_URL)
+        logging.info("Webhook установлен на: %s", WEBHOOK_URL)
+
+    web_app = web.Application()
+    web_app.router.add_post(WEBHOOK_PATH, handle)
+    web_app.on_startup.append(on_startup)
+
+    web.run_app(web_app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
     main()
