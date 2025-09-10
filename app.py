@@ -250,17 +250,17 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Занят. Напиши мне позже.")
         return
 
-      await update.message.reply_text(reply)
+    await update.message.reply_text(reply)
 
     # сохраняем в память только последние 8 пар сообщений
     history.append({"role": "user", "content": text})
     history.append({"role": "assistant", "content": reply})
     context.user_data["history"] = history[-MAX_TURNS*2:]
 
-    # === MAIN ===
 def main() -> None:
     app = Application.builder().token(TG_TOKEN).build()
 
+    # убедитесь, что эти функции реально объявлены с такими именами
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
@@ -271,9 +271,8 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, talk))
 
     port = int(os.getenv("PORT", "8080"))
-    logging.info(f"🚀 Запуск {BOT_NAME} на порту {port}")
+    logging.info(f"Запуск {BOT_NAME} на порту {port}")
     app.run_polling()
 
-if name == "__main__":
+if __name__ == "__main__":
     main()
-        
