@@ -20,10 +20,7 @@ from openai import OpenAI
 from aiohttp import web
 
 # ================= Настройка логирования =================
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s | %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s | %(message)s")
 
 # ================= Загрузка переменных окружения =================
 load_dotenv()
@@ -92,10 +89,8 @@ def consent_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Подтверждаю", callback_data="consent_accept")],
         [InlineKeyboardButton("Отклоняю", callback_data="consent_decline")],
-        [
-            InlineKeyboardButton("Условия", url=TERMS_URL),
-            InlineKeyboardButton("Политика", url=PRIVACY_URL)
-        ]
+        [InlineKeyboardButton("Условия", url=TERMS_URL),
+         InlineKeyboardButton("Политика", url=PRIVACY_URL)]
     ])
 
 async def send_consent_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -113,7 +108,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not await is_subscribed(context.bot, user_id):
         await update.message.reply_text(
-            f"Подпишитесь на наш канал: https://t.me/{CHANNEL_USERNAME.strip('@')}\nПосле подписки нажмите /start."
+            f"Подпишитесь на канал: https://t.me/{CHANNEL_USERNAME.strip('@')}\nПосле подписки нажмите /start."
         )
         return
     if not has_accepted(user_id):
@@ -121,9 +116,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     context.user_data.setdefault("history", [])
-    await update.message.reply_text(
-        "Привет! Это общий шаблон бота.\nКоманды: /help, /reset"
-    )
+    await update.message.reply_text("Привет! Это бот через вебхук.\nКоманды: /help, /reset")
 
 async def on_consent_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -135,13 +128,13 @@ async def on_consent_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     set_accepted(user_id)
-    await query.edit_message_text("Спасибо! Доступ открыт. Можете отправить сообщение или /start.")
+    await query.edit_message_text("Спасибо! Доступ открыт. Можете писать сообщения.")
 
 async def on_consent_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     delete_acceptance(query.from_user.id)
-    await query.edit_message_text("Вы отклонили условия. Чтобы вернуться, используйте /start.")
+    await query.edit_message_text("Вы отклонили условия. Используйте /start чтобы начать снова.")
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -150,12 +143,11 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["history"] = []
-    await update.message.reply_text("Контекст очищен. С чего начнём заново?")
+    await update.message.reply_text("Контекст очищен. Начнем заново?")
 
 # ================= LLM =================
 def build_messages(history: list[dict], user_text: str, mode: str) -> list[dict]:
-    length_rule = "Отвечай максимально кратко (3-5 слов)." if mode == "short" else \
-                  "Дай развернутый ответ около 180–220 токенов."
+    length_rule = "Отвечай кратко (3-5 слов)." if mode == "short" else "Развернутый ответ около 180–220 токенов."
     msgs = [{"role": "system", "content": SYSTEM_PROMPT + "\n" + length_rule}]
     msgs += history[-2*MAX_TURNS:]
     msgs.append({"role": "user", "content": user_text})
@@ -172,7 +164,7 @@ def llm_reply(messages: list[dict], mode: str) -> str:
         return resp.choices[0].message.content.strip()
     except Exception as e:
         logging.error(f"LLM error: {e}")
-        return "Занят. Напиши позже."
+        return "Занят. Напишите позже."
 
 async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -191,9 +183,7 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
     text_l = text.lower()
-    mode = "long" if any(k in text_l for k in ("#long", "подробнее")) else \
-           "short" if any(k in text_l for k in ("#short", "кратко")) else \
-           "long" if random.random() < LONG_PROB else "short"
+    mode = "long" if any(k in text_l for k in ("#long", "подробнее")) else "short" if any(k in text_l for k in ("#short", "кратко")) else "long" if random.random() < LONG_PROB else "short"
 
     messages = build_messages(history, text, mode)
     reply = await asyncio.to_thread(llm_reply, messages, mode)
@@ -205,6 +195,7 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= Main =================
 def main():
+    # Создаем приложение Telegram
     app = Application.builder().token(TG_TOKEN).build()
 
     # Хендлеры
@@ -216,19 +207,20 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, talk))
 
     PORT = int(os.environ.get("PORT", 8000))
-    WEBHOOK_PATH = f"/webhook"
+    WEBHOOK_PATH = "/webhook"
     WEBHOOK_FULL_URL = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
 
     async def handle(request):
         data = await request.json()
-        update = Update.de_json(data)
+        update = Update.de_json(data, app.bot)
         await app.process_update(update)
         return web.Response(text="ok")
 
     async def on_startup(_):
         await app.bot.set_webhook(WEBHOOK_FULL_URL)
-        logging.info(f"Webhook установлен на: {WEBHOOK_FULL_URL}")
+        logging.info(f"Webhook установлен: {WEBHOOK_FULL_URL}")
 
+    # Запуск aiohttp
     web_app = web.Application()
     web_app.router.add_post(WEBHOOK_PATH, handle)
     web_app.on_startup.append(on_startup)
