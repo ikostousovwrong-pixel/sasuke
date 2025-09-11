@@ -33,7 +33,7 @@ SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE")  # путь к txt файл
 
 if not TG_TOKEN or not OPENAI_API_KEY or not WEBHOOK_URL or not SYSTEM_PROMPT_FILE:
     raise RuntimeError(
-        "Не хватает переменных окружения TELEGRAM_TOKEN / OPENAI_API_KEY / WEBHOOK_URL / SYSTEM_PROMPT_FILE"
+        "Не хватает переменных окружения: TELEGRAM_TOKEN / OPENAI_API_KEY / WEBHOOK_URL / SYSTEM_PROMPT_FILE"
     )
 
 # Читаем системный промпт из файла
@@ -207,16 +207,15 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TG_TOKEN).build()
 
-    # Онбординг
+    # Обработчики
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(on_consent_accept, pattern="^consent_accept$"))
     app.add_handler(CallbackQueryHandler(on_consent_decline, pattern="^consent_decline$"))
-
-    # Команды
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, talk))
 
+    # Webhook
     PORT = int(os.environ.get("PORT", 8000))
     WEBHOOK_PATH = f"/{TG_TOKEN}"
 
@@ -233,6 +232,8 @@ def main():
     web_app = web.Application()
     web_app.router.add_post(WEBHOOK_PATH, handle)
     web_app.on_startup.append(on_startup)
+
+    logging.info(f"Сервис запущен на порту {PORT}")
     web.run_app(web_app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
