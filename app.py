@@ -29,7 +29,7 @@ logging.basicConfig(
 load_dotenv()
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://yourdomain.com
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://multi-telegram-bots.onrender.com
 SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE")
 
 # ===== Проверка переменных окружения =====
@@ -218,7 +218,7 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= Main =================
 def main():
-    app = Application.builder().token(TG_TOKEN).build()  # только webhook, polling нет
+    app = Application.builder().token(TG_TOKEN).build()  # только webhook
 
     # Хендлеры
     app.add_handler(CommandHandler("start", start))
@@ -230,7 +230,7 @@ def main():
 
     PORT = int(os.environ.get("PORT", 8000))
     WEBHOOK_PATH = "/webhook"
-    WEBHOOK_FULL_URL = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+    WEBHOOK_FULL_URL = WEBHOOK_URL.rstrip("/") + WEBHOOK_PATH  # убираем лишние слэши
 
     async def handle(request):
         data = await request.json()
