@@ -29,7 +29,7 @@ logging.basicConfig(
 load_dotenv()
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://yourdomain.com
 SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE")
 
 if not TG_TOKEN or not OPENAI_API_KEY or not WEBHOOK_URL or not SYSTEM_PROMPT_FILE:
@@ -37,7 +37,6 @@ if not TG_TOKEN or not OPENAI_API_KEY or not WEBHOOK_URL or not SYSTEM_PROMPT_FI
         "Не хватает переменных окружения TELEGRAM_TOKEN / OPENAI_API_KEY / WEBHOOK_URL / SYSTEM_PROMPT_FILE"
     )
 
-# Читаем системный промпт из файла
 with open(SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
     SYSTEM_PROMPT = f.read().strip()
 
@@ -208,7 +207,7 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TG_TOKEN).build()
 
-    # Онбординг и команды
+    # Хендлеры
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(on_consent_accept, pattern="^consent_accept$"))
     app.add_handler(CallbackQueryHandler(on_consent_decline, pattern="^consent_decline$"))
@@ -217,16 +216,16 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, talk))
 
     PORT = int(os.environ.get("PORT", 8000))
-    WEBHOOK_PATH = f"/{TG_TOKEN}"
-    WEBHOOK_FULL_URL = f"{WEBHOOK_URL}/{TG_TOKEN}"
+    WEBHOOK_PATH = f"/webhook"
+    WEBHOOK_FULL_URL = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
 
     async def handle(request):
         data = await request.json()
-        update = Update.de_json(data, app.bot)
+        update = Update.de_json(data)
         await app.process_update(update)
         return web.Response(text="ok")
 
-    async def on_startup(web_app):
+    async def on_startup(_):
         await app.bot.set_webhook(WEBHOOK_FULL_URL)
         logging.info(f"Webhook установлен на: {WEBHOOK_FULL_URL}")
 
