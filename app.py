@@ -19,21 +19,22 @@ from telegram.ext import (
 from openai import OpenAI
 from aiohttp import web
 
-# ================= Настройка =================
+# ================= Настройка логирования =================
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s | %(message)s",
 )
 
+# ================= Загрузка переменных окружения =================
 load_dotenv()
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE")  # путь к txt файлу с системным промптом
+SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE")
 
 if not TG_TOKEN or not OPENAI_API_KEY or not WEBHOOK_URL or not SYSTEM_PROMPT_FILE:
     raise RuntimeError(
-        "Не хватает переменных окружения: TELEGRAM_TOKEN / OPENAI_API_KEY / WEBHOOK_URL / SYSTEM_PROMPT_FILE"
+        "Не хватает переменных окружения TELEGRAM_TOKEN / OPENAI_API_KEY / WEBHOOK_URL / SYSTEM_PROMPT_FILE"
     )
 
 # Читаем системный промпт из файла
@@ -207,7 +208,7 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TG_TOKEN).build()
 
-    # Обработчики
+    # Онбординг и команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(on_consent_accept, pattern="^consent_accept$"))
     app.add_handler(CallbackQueryHandler(on_consent_decline, pattern="^consent_decline$"))
@@ -215,9 +216,9 @@ def main():
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, talk))
 
-    # Webhook
     PORT = int(os.environ.get("PORT", 8000))
     WEBHOOK_PATH = f"/{TG_TOKEN}"
+    WEBHOOK_FULL_URL = f"{WEBHOOK_URL}/{TG_TOKEN}"
 
     async def handle(request):
         data = await request.json()
@@ -226,14 +227,14 @@ def main():
         return web.Response(text="ok")
 
     async def on_startup(web_app):
-        await app.bot.set_webhook(WEBHOOK_URL)
-        logging.info(f"Webhook установлен на: {WEBHOOK_URL}")
+        await app.bot.set_webhook(WEBHOOK_FULL_URL)
+        logging.info(f"Webhook установлен на: {WEBHOOK_FULL_URL}")
 
     web_app = web.Application()
     web_app.router.add_post(WEBHOOK_PATH, handle)
     web_app.on_startup.append(on_startup)
 
-    logging.info(f"Сервис запущен на порту {PORT}")
+    logging.info(f"Сервер запускается на 0.0.0.0:{PORT}")
     web.run_app(web_app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
