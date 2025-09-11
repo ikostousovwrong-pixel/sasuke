@@ -29,7 +29,7 @@ logging.basicConfig(
 load_dotenv()
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://multi-telegram-bots.onrender.com
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://yourdomain.com
 SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE")
 
 # ===== Проверка переменных окружения =====
@@ -46,10 +46,10 @@ if missing_vars:
 
 logging.info("Переменные окружения загружены:")
 for name, value in required_vars.items():
-    display = value if name != "TELEGRAM_TOKEN" else "***скрыт***"
+    display = "***скрыт***" if name == "TELEGRAM_TOKEN" else value
     logging.info(f"{name}: {display}")
 
-# Читаем системный промпт
+# ================= Системный промпт =================
 with open(SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
     SYSTEM_PROMPT = f.read().strip()
 
@@ -73,7 +73,9 @@ CREATE TABLE IF NOT EXISTS tos_acceptance (
 conn.commit()
 
 def has_accepted(user_id: int) -> bool:
-    row = conn.execute("SELECT version FROM tos_acceptance WHERE user_id = ?", (user_id,)).fetchone()
+    row = conn.execute(
+        "SELECT version FROM tos_acceptance WHERE user_id = ?", (user_id,)
+    ).fetchone()
     return row is not None and int(row[0]) == TOS_VERSION
 
 def set_accepted(user_id: int) -> None:
@@ -144,7 +146,9 @@ async def on_consent_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
     if not await is_subscribed(context.bot, user_id):
-        await query.message.reply_text(f"Сначала подпишитесь на канал: https://t.me/{CHANNEL_USERNAME.strip('@')}")
+        await query.message.reply_text(
+            f"Сначала подпишитесь на канал: https://t.me/{CHANNEL_USERNAME.strip('@')}"
+        )
         return
 
     set_accepted(user_id)
@@ -190,7 +194,9 @@ def llm_reply(messages: list[dict], mode: str) -> str:
 async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not await is_subscribed(context.bot, user_id):
-        await update.message.reply_text(f"Подпишитесь на канал: https://t.me/{CHANNEL_USERNAME.strip('@')}")
+        await update.message.reply_text(
+            f"Подпишитесь на канал: https://t.me/{CHANNEL_USERNAME.strip('@')}"
+        )
         return
     if not has_accepted(user_id):
         await send_consent_message(update, context)
@@ -217,8 +223,9 @@ async def talk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["history"] = history[-2*MAX_TURNS:]
 
 # ================= Main =================
-def main():
-    app = Application.builder().token(TG_TOKEN).build()  # только webhook
+async def main():
+    app = Application.builder().token(TG_TOKEN).build()
+    await app.initialize()  # важно для process_update
 
     # Хендлеры
     app.add_handler(CommandHandler("start", start))
@@ -230,7 +237,7 @@ def main():
 
     PORT = int(os.environ.get("PORT", 8000))
     WEBHOOK_PATH = "/webhook"
-    WEBHOOK_FULL_URL = WEBHOOK_URL.rstrip("/") + WEBHOOK_PATH  # убираем лишние слэши
+    WEBHOOK_FULL_URL = WEBHOOK_URL.rstrip("/") + WEBHOOK_PATH
 
     async def handle(request):
         data = await request.json()
@@ -250,4 +257,4 @@ def main():
     web.run_app(web_app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
