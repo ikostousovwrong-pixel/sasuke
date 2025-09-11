@@ -32,10 +32,22 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://yourdomain.com
 SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE")
 
-if not TG_TOKEN or not OPENAI_API_KEY or not WEBHOOK_URL or not SYSTEM_PROMPT_FILE:
-    raise RuntimeError(
-        "Не хватает переменных окружения TELEGRAM_TOKEN / OPENAI_API_KEY / WEBHOOK_URL / SYSTEM_PROMPT_FILE"
-    )
+# ===== Проверка переменных окружения =====
+required_vars = {
+    "TELEGRAM_TOKEN": TG_TOKEN,
+    "OPENAI_API_KEY": OPENAI_API_KEY,
+    "WEBHOOK_URL": WEBHOOK_URL,
+    "SYSTEM_PROMPT_FILE": SYSTEM_PROMPT_FILE,
+}
+
+missing_vars = [name for name, value in required_vars.items() if not value]
+if missing_vars:
+    raise RuntimeError(f"Не хватает переменных окружения: {', '.join(missing_vars)}")
+
+logging.info("Переменные окружения загружены:")
+for name, value in required_vars.items():
+    display = value if name != "TELEGRAM_TOKEN" else "***скрыт***"
+    logging.info(f"{name}: {display}")
 
 with open(SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
     SYSTEM_PROMPT = f.read().strip()
