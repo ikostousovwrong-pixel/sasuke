@@ -142,7 +142,7 @@ def llm_reply(messages, mode):
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             temperature=0.8 if mode=="long" else 0.5,
-            max_tokens=220 if mode=="long" else 35,
+            max_tokens=220 if mode=="long" else 45,
             messages=messages
         )
         return resp.choices[0].message.content.strip()
