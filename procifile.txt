@@ -1,2 +1,0 @@
-pip install openai
-pip install python-telegram-bot python-dotenv requests
